@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CampusCart - Rent, Lend and Borrow</title>
+<style>
+  :root{--brand:#1f6feb;--dark:#154fb0;--bg:#f4f6fb;--text:#1c2333;--muted:#6b7488;--ok:#1a9c5b;--warn:#d98a00;--bad:#d64545}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--text)}
+  header{background:var(--brand);color:#fff;padding:14px 20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px}
+  header h1{margin:0;font-size:1.3rem}header small{display:block;font-size:.75rem;font-weight:400;opacity:.85}
+  nav button{background:transparent;color:#fff;border:1px solid rgba(255,255,255,.5);padding:7px 12px;border-radius:8px;cursor:pointer;margin-left:6px}
+  nav button.active{background:#fff;color:var(--brand)}
+  main{max-width:1000px;margin:20px auto;padding:0 16px 60px}
+  .card{background:#fff;border-radius:12px;padding:16px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px}
+  .item img,.ph{width:100%;height:150px;object-fit:cover;border-radius:8px;background:#e3e8f2;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:.85rem}
+  .item h3{margin:10px 0 4px;font-size:1rem}.muted{color:var(--muted);font-size:.85rem}.price{color:var(--brand);font-weight:700}
+  .tag{display:inline-block;background:#e8f0fe;color:var(--dark);padding:2px 8px;border-radius:20px;font-size:.75rem;margin:0 4px 4px 0}
+  .save{background:#e6f6ee;color:var(--ok);font-weight:600}
+  input,select,textarea{width:100%;padding:10px;border:1px solid #cfd6e4;border-radius:8px;font-size:.95rem;margin:4px 0 10px;font-family:inherit}
+  label{font-size:.85rem;font-weight:600}
+  .primary{background:var(--brand);color:#fff;border:0;padding:10px 16px;border-radius:8px;cursor:pointer;font-size:.95rem}
+  .primary:hover{background:var(--dark)}
+  .small{padding:6px 10px;font-size:.8rem;border-radius:6px;border:0;cursor:pointer;margin-right:4px;color:#fff;background:var(--brand)}
+  .red{background:var(--bad)}.green{background:var(--ok)}
+  .bar{display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap}.bar input,.bar select{margin:0;flex:1;min-width:140px}
+  .chips{margin-bottom:16px}.chips span{display:inline-block;background:#fff;border:1px solid #cfd6e4;padding:5px 12px;border-radius:20px;font-size:.8rem;margin:0 6px 6px 0;cursor:pointer}
+  .narrow{max-width:420px;margin:30px auto}
+  .status{padding:2px 8px;border-radius:20px;font-size:.75rem;font-weight:600;color:#fff}
+  .s-booked{background:var(--warn)}.s-active{background:var(--brand)}.s-returned{background:var(--ok)}.s-cancelled{background:var(--muted)}
+  .row{display:flex;gap:12px;align-items:center;padding:12px 0;border-bottom:1px solid #eef1f7}.row:last-child{border:0}
+  .row img{width:60px;height:60px;object-fit:cover;border-radius:8px}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px}
+  .stats b{display:block;font-size:1.4rem;color:var(--brand)}
+  .karma{background:linear-gradient(135deg,#1f6feb,#7b4dff);color:#fff;margin-bottom:16px}
+  .meter{height:10px;background:rgba(255,255,255,.3);border-radius:10px;margin:8px 0}.meter div{height:100%;background:#fff;border-radius:10px}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;padding:16px;z-index:10}
+  .modal.show{display:flex}.modal .card{max-width:420px;width:100%;max-height:90vh;overflow:auto}
+  #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#222;color:#fff;padding:10px 18px;border-radius:8px;display:none;z-index:20}
+  h2{margin-top:0}
+</style>
+</head>
+<body>
+<header><h1>🛒 CampusCart <small>Rent, Lend and Borrow</small></h1><nav id="nav"></nav></header>
+<main id="app"></main>
+<div class="modal" id="modal"><div class="card" id="modalBody"></div></div>
+<div id="toast"></div>
+
+<script>
+// ====== CHANGE THIS to your Render backend URL after deploying (no slash at the end) ======
+const API = "http://localhost:5000";
+// ==========================================================================================
+
+let token = localStorage.getItem("cc_token");
+let user = JSON.parse(localStorage.getItem("cc_user") || "null");
+let view = "browse";
+const CATEGORIES = ["Books","Calculators","Lab Equipment","Drawing Tools","Project Kits","Other"];
+const COURSES = ["Engineering Drawing","Engineering Physics","Basic Electrical","Programming (C/Python)","Civil Lab","Mechanical Workshop"];
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+function toast(m){const t=$("toast");t.textContent=m;t.style.display="block";setTimeout(()=>t.style.display="none",2800)}
+
+async function api(path, method="GET", body){
+  const res = await fetch(API+path,{method,headers:{"Content-Type":"application/json",...(token?{Authorization:"Bearer "+token}:{})},body:body?JSON.stringify(body):undefined});
+  const data = await res.json().catch(()=>({}));
+  if(!res.ok){ if(res.status===401&&token) logout(); throw new Error(data.error||"Something went wrong"); }
+  return data;
+}
+function logout(){token=null;user=null;localStorage.removeItem("cc_token");localStorage.removeItem("cc_user");go("browse")}
+function go(v){view=v;render()}
+
+function renderNav(){
+  const tabs=[["browse","Browse"]];
+  if(user) tabs.push(["add","+ List item"],["mine","My rentals"],["dash","Dashboard"]);
+  $("nav").innerHTML = tabs.map(([k,l])=>`<button class="${view===k?"active":""}" onclick="go('${k}')">${l}</button>`).join("") +
+    (user?`<button onclick="logout()">Logout (${esc(user.name.split(" ")[0])})</button>`:`<button onclick="go('login')">Login / Sign up</button>`);
+}
+async function render(){
+  renderNav();
+  try{
+    if(view==="browse") return await renderBrowse();
+    if(view==="login") return renderLogin();
+    if(!user) return go("login");
+    if(view==="add") return renderAdd();
+    if(view==="mine") return await renderMine();
+    if(view==="dash") return await renderDash();
+  }catch(e){ $("app").innerHTML=`<div class="card">⚠️ ${esc(e.message)}<br><span class="muted">If the server was asleep, wait 30 seconds and refresh.</span></div>`; }
+}
+
+// ---------- Browse ----------
+let filters={q:"",category:"All"};
+async function renderBrowse(){
+  $("app").innerHTML=`
+    <div class="bar"><input id="q" placeholder="Search item or course, e.g. drawing, physics lab..." value="${esc(filters.q)}">
+    <select id="cat"><option>All</option>${CATEGORIES.map(c=>`<option ${filters.category===c?"selected":""}>${c}</option>`).join("")}</select>
+    <button class="primary" onclick="applyFilters()">Search</button></div>
+    <div class="chips"><span onclick="chip('')">All courses</span>${COURSES.map(c=>`<span onclick="chip('${c}')">📘 ${c}</span>`).join("")}</div>
+    <div id="list" class="muted">Loading...</div>`;
+  $("q").addEventListener("keydown",e=>e.key==="Enter"&&applyFilters());
+  const items = await api(`/api/listings?q=${encodeURIComponent(filters.q)}&category=${encodeURIComponent(filters.category)}`);
+  window._items=items;
+  $("list").className=items.length?"grid":"muted";
+  $("list").innerHTML=items.length?items.map(i=>`
+    <div class="card item">
+      ${i.photo?`<img src="${i.photo}" alt="">`:`<div class="ph">No photo</div>`}
+      <h3>${esc(i.title)}</h3>
+      <span class="tag">${esc(i.category)}</span><span class="tag">${esc(i.condition)}</span>
+      ${i.course?`<span class="tag">📘 ${esc(i.course)}</span>`:""}
+      ${i.mrp>i.pricePerDay?`<span class="tag save">Save ₹${i.mrp-i.pricePerDay} vs buying new</span>`:""}
+      <p class="price">₹${i.pricePerDay}/day <span class="muted">+ ₹${i.deposit} deposit</span></p>
+      <p class="muted">Owner: ${esc(i.owner?.name)} ${i.owner?.department?"("+esc(i.owner.department)+")":""}<br>Pickup: ${esc(i.pickupPoint)}</p>
+      <button class="primary" onclick="openBook('${i._id}')">Rent this</button>
+    </div>`).join(""):"No items yet. Be the first to list one!";
+}
+function applyFilters(){filters.q=$("q").value;filters.category=$("cat").value;renderBrowse()}
+function chip(c){filters.q=c;filters.category="All";renderBrowse()}
+
+async function openBook(id){
+  if(!user){toast("Please log in first");return go("login")}
+  const i=window._items.find(x=>x._id===id);
+  let k; try{k=await api("/api/me/karma")}catch(e){return toast(e.message)}
+  const dep=Math.round(i.deposit*k.depositFactor);
+  $("modalBody").innerHTML=`
+    <h2>Rent: ${esc(i.title)}</h2>
+    <label>How many days?</label>
+    <select id="days">${[1,2,3,5,7,14,30,120].map(d=>`<option value="${d}">${d} day${d>1?"s":""}${d===7?" (week)":d===30?" (month)":d===120?" (semester)":""}</option>`).join("")}</select>
+    <div id="sum" class="card" style="background:#f4f6fb;margin-bottom:12px"></div>
+    <p class="muted">Your Campus Karma: <b>${k.score}/100 (${k.level})</b>. ${k.depositFactor===0?"Deposit waived!":k.depositFactor===.5?"You get 50% off the deposit.":"Return on time to unlock lower deposits."}<br>Payment is simulated in this prototype.</p>
+    <button class="primary" id="payBtn">Confirm & pay (demo)</button> <button class="small red" onclick="closeModal()">Cancel</button>`;
+  const upd=()=>{const d=+$("days").value,rent=d*i.pricePerDay;
+    $("sum").innerHTML=`Rent: ₹${rent}<br>Deposit: ${dep<i.deposit?`<s>₹${i.deposit}</s> `:""}₹${dep} (refundable)<br><b>Total now: ₹${rent+dep}</b>${i.mrp>rent?`<br><span style="color:var(--ok)">You save ₹${i.mrp-rent} compared to buying new</span>`:""}`};
+  $("days").onchange=upd;upd();
+  $("payBtn").onclick=async()=>{try{await api("/api/bookings","POST",{listingId:id,days:+$("days").value});closeModal();toast("Booked! Meet at: "+i.pickupPoint);go("mine")}catch(e){toast(e.message)}};
+  $("modal").classList.add("show");
+}
+function closeModal(){$("modal").classList.remove("show")}
+$("modal").addEventListener("click",e=>e.target.id==="modal"&&closeModal());
+
+// ---------- Login / Register ----------
+function renderLogin(){
+  let mode="login";
+  const draw=()=>{
+    $("app").innerHTML=`<div class="card narrow"><h2>${mode==="login"?"Login":"Create account"}</h2>
+      ${mode==="register"?`<label>Full name</label><input id="name"><label>Department</label><input id="dept" placeholder="e.g. Computer Science"><label>Year</label><select id="year"><option>1st</option><option>2nd</option><option>3rd</option><option>4th</option></select>`:""}
+      <label>College email</label><input id="email" type="email" placeholder="you@college.edu">
+      <label>Password</label><input id="pw" type="password">
+      <button class="primary" id="go">${mode==="login"?"Login":"Sign up"}</button>
+      <p class="muted" style="cursor:pointer" id="sw">${mode==="login"?"New here? Create an account":"Already have an account? Login"}</p></div>`;
+    $("sw").onclick=()=>{mode=mode==="login"?"register":"login";draw()};
+    $("go").onclick=async()=>{try{
+      const body=mode==="login"?{email:$("email").value,password:$("pw").value}:{name:$("name").value,email:$("email").value,password:$("pw").value,department:$("dept").value,year:$("year").value};
+      const r=await api("/api/auth/"+mode,"POST",body);
+      token=r.token;user=r.user;localStorage.setItem("cc_token",token);localStorage.setItem("cc_user",JSON.stringify(user));
+      toast("Welcome, "+user.name+"!");go("browse");
+    }catch(e){toast(e.message)}};
+  };
+  draw();
+}
+
+// ---------- Add listing ----------
+function renderAdd(){
+  $("app").innerHTML=`<div class="card narrow" style="max-width:560px"><h2>List an item</h2>
+    <label>Title</label><input id="t" placeholder="e.g. Casio fx-991 calculator">
+    <label>Category</label><select id="c">${CATEGORIES.map(c=>`<option>${c}</option>`).join("")}</select>
+    <label>Course / subject it is useful for (optional)</label><input id="course" list="cl" placeholder="e.g. Engineering Drawing"><datalist id="cl">${COURSES.map(c=>`<option value="${c}">`).join("")}</datalist>
+    <label>Condition</label><select id="cond"><option>Good</option><option>New</option><option>Fair</option></select>
+    <label>Price if bought new (₹) - shows renters how much they save</label><input id="mrp" type="number" min="0" value="500">
+    <label>Rent per day (₹)</label><input id="p" type="number" min="1" value="10">
+    <label>Refundable deposit (₹)</label><input id="d" type="number" min="0" value="100">
+    <label>Pickup point</label><input id="pp" value="Main Gate Help Desk">
+    <label>Description</label><textarea id="desc" rows="3"></textarea>
+    <label>Photo</label><input id="ph" type="file" accept="image/*">
+    <button class="primary" id="save">Publish listing</button></div>`;
+  $("save").onclick=async()=>{try{
+    const f=$("ph").files[0];const photo=f?await shrink(f):"";
+    await api("/api/listings","POST",{title:$("t").value,category:$("c").value,course:$("course").value,condition:$("cond").value,mrp:$("mrp").value,pricePerDay:$("p").value,deposit:$("d").value,pickupPoint:$("pp").value,description:$("desc").value,photo});
+    toast("Listed!");go("browse");
+  }catch(e){toast(e.message)}};
+}
+function shrink(file){return new Promise(res=>{const img=new Image();img.onload=()=>{const s=Math.min(1,600/Math.max(img.width,img.height)),c=document.createElement("canvas");c.width=img.width*s;c.height=img.height*s;c.getContext("2d").drawImage(img,0,0,c.width,c.height);res(c.toDataURL("image/jpeg",.7))};img.src=URL.createObjectURL(file)})}
+
+// ---------- My rentals ----------
+async function renderMine(){
+  const [{asRenter,asOwner},mine,k]=await Promise.all([api("/api/bookings/mine"),api("/api/listings/mine"),api("/api/me/karma")]);
+  const row=(b,who)=>`<div class="row">
+    ${b.listing?.photo?`<img src="${b.listing.photo}">`:`<div class="ph" style="width:60px;height:60px">-</div>`}
+    <div style="flex:1"><b>${esc(b.listing?.title||"Item")}</b> <span class="status s-${b.status}">${b.status}</span><br>
+    <span class="muted">${b.days} day(s) · Rent ₹${b.rentAmount} · Deposit ₹${b.deposit} · ${who==="owner"?"Renter: "+esc(b.renter?.name)+" ("+esc(b.renter?.email)+")":"Owner: "+esc(b.owner?.name)+" · Pickup: "+esc(b.listing?.pickupPoint)}</span>
+    ${who==="owner"?`<br><span class="muted">You earn ₹${b.ownerEarning}</span>`:""}${b.dueAt&&b.status==="active"?`<br><span class="muted">Due back: ${new Date(b.dueAt).toLocaleString()}</span>`:""}${b.rating?`<br>⭐ ${b.rating}/5 ${esc(b.review)}`:""}</div>
+    <div>${who==="owner"&&b.status==="booked"?`<button class="small green" onclick="setStatus('${b._id}','active')">Handed over</button><button class="small red" onclick="setStatus('${b._id}','cancelled')">Cancel</button>`:""}
+    ${who==="owner"&&b.status==="active"?`<button class="small green" onclick="setStatus('${b._id}','returned')">Mark returned</button>`:""}
+    ${who==="renter"&&b.status==="returned"&&!b.rating?`<button class="small" onclick="rate('${b._id}')">Rate</button>`:""}</div></div>`;
+  $("app").innerHTML=`
+    <div class="card karma"><b>Campus Karma: ${k.score}/100 · ${k.level}</b>
+      <div class="meter"><div style="width:${k.score}%"></div></div>
+      ${k.completed} rental(s) completed, ${k.onTime} on time · You have saved ₹${k.totalSaved} vs buying new</div>
+    <div class="card" style="margin-bottom:16px"><h2>Items I'm renting</h2>${asRenter.map(b=>row(b,"renter")).join("")||'<p class="muted">Nothing yet.</p>'}</div>
+    <div class="card" style="margin-bottom:16px"><h2>Requests on my items</h2>${asOwner.map(b=>row(b,"owner")).join("")||'<p class="muted">Nothing yet.</p>'}</div>
+    <div class="card"><h2>My listings</h2>${mine.map(l=>`<div class="row"><div style="flex:1"><b>${esc(l.title)}</b> <span class="muted">₹${l.pricePerDay}/day · ${l.available?"Available":"Rented out"}</span></div><button class="small red" onclick="delListing('${l._id}')">Delete</button></div>`).join("")||'<p class="muted">You have not listed anything yet.</p>'}</div>`;
+}
+async function setStatus(id,status){try{await api(`/api/bookings/${id}/status`,"PATCH",{status});toast("Updated");renderMine()}catch(e){toast(e.message)}}
+async function rate(id){const r=prompt("Rate 1 to 5");if(!r)return;const review=prompt("Short review (optional)")||"";try{await api(`/api/bookings/${id}/review`,"POST",{rating:+r,review});toast("Thanks!");renderMine()}catch(e){toast(e.message)}}
+async function delListing(id){if(!confirm("Delete this listing?"))return;try{await api("/api/listings/"+id,"DELETE");renderMine()}catch(e){toast(e.message)}}
+
+// ---------- Dashboard ----------
+async function renderDash(){
+  const s=await api("/api/stats");
+  $("app").innerHTML=`<h2>Campus impact dashboard</h2><div class="stats">
+    <div class="card"><b>${s.users}</b>Students</div><div class="card"><b>${s.listings}</b>Listings</div>
+    <div class="card"><b>${s.bookings}</b>Bookings</div><div class="card"><b>${s.completedRentals}</b>Completed rentals</div>
+    <div class="card"><b>₹${s.studentSavings}</b>Saved by students</div><div class="card"><b>${s.newPurchasesAvoided}</b>New purchases avoided</div>
+    <div class="card"><b>₹${s.rentalValue}</b>Rental value</div><div class="card"><b>₹${s.platformRevenue}</b>Platform revenue (5%)</div></div>
+    <p class="muted">These are the pilot success measures and sustainability numbers from the CampusCart deck.</p>`;
+}
+render();
+</script>
+</body>
+</html>
